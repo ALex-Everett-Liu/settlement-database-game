@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>据点管理游戏</title>
+    <style>
+        #map {
+            width: 800px;
+            height: 600px;
+            border: 1px solid #ccc;
+            position: relative;
+        }
+        .settlement {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            transform: translate(-50%, -50%); /* 使中心点对准坐标 */
+            transition: all 0.2s;
+        }
+        .settlement:hover {
+            transform: scale(1.2);
+        }
+        #controls {
+            margin: 20px 0;
+            display: flex;
+            gap: 10px;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 20px;
+            background: white;
+            border: 1px solid #ccc;
+            z-index: 1000;
+        }
+        .modal-content {
+            background: white;
+            padding: 20px;
+            border-radius: 5px;
+            width: 300px;
+        }
+        .form-row {
+            margin: 10px 0;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input, select {
+            width: 100%;
+            padding: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <button onclick="showCreateModal()">新建据点</button>
+        <button onclick="advanceYear()">推进到下一年</button>
+    </div>
+    <div id="map"></div>
+
+    <!-- 新增创建据点模态框 -->
+    <div id="createModal" class="modal">
+        <div class="modal-content">
+            <h3>新建据点</h3>
+            <form id="createForm">
+                <div class="form-row">
+                    <label>据点名称:</label>
+                    <input type="text" id="createName" required>
+                </div>
+                <div class="form-row">
+                    <label>坐标 X:</label>
+                    <input type="number" id="createX" step="0.001" required>
+                </div>
+                <div class="form-row">
+                    <label>坐标 Y:</label>
+                    <input type="number" id="createY" step="0.001" required>
+                </div>
+                <div class="form-row">
+                    <label>地形类型:</label>
+                    <select id="createTerrain">
+                        <option value="平原">平原</option>
+                        <option value="山地">山地</option>
+                        <option value="森林">森林</option>
+                        <option value="沙漠">沙漠</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <label>初始人口:</label>
+                    <input type="number" id="createPopulation" value="1000" required>
+                </div>
+                <div class="form-row">
+                    <button type="submit">创建</button>
+                    <button type="button" onclick="closeCreateModal()">取消</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="editModal" class="modal">
+        <h3>编辑据点</h3>
+        <form id="editForm">
+            <input type="hidden" id="editId">
+            <label>名称: <input type="text" id="editName" required></label><br>
+            <label>人口: <input type="number" id="editPopulation" step="100"></label><br>
+            <label>经济: <input type="number" id="editEconomy"></label><br>
+            <label>财政: <input type="number" id="editFinance"></label><br>
+            <label>军事: <input type="number" id="editMilitary"></label><br>
+            <label>可征召: <input type="number" id="editRecruitable"></label><br>
+            <label>稳定度: <input type="number" id="editStability" min="0" max="100"></label><br>
+            <label>防御等级: <input type="number" id="editDefense"></label><br>
+            <button type="submit">保存</button>
+            <button type="button" onclick="closeModal()">取消</button>
+        </form>
+    </div>
+
+    <script>
+        let currentData = [];
+        const factionColors = {};
+
+        // 新增创建据点功能
+        function showCreateModal() {
+            document.getElementById('createModal').style.display = 'block';
+        }
+
+        function closeCreateModal() {
+            document.getElementById('createModal').style.display = 'none';
+        }
+
+        // 处理新建表单提交
+        document.getElementById('createForm').onsubmit = async (e) => {
+            e.preventDefault();
+            
+            const newSettlement = {
+                name: document.getElementById('createName').value,
+                x: parseFloat(document.getElementById('createX').value),
+                y: parseFloat(document.getElementById('createY').value),
+                terrain: document.getElementById('createTerrain').value,
+                population: parseFloat(document.getElementById('createPopulation').value),
+                economy: 50,  // 默认值
+                finance: 1000,
+                military: 100,
+                recruitable: 200,
+                stability: 70,
+                defense: 20
+            };
+
+            try {
+                const response = await fetch('http://localhost:3000/api/settlements', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(newSettlement)
+                });
+                
+                if (response.ok) {
+                    closeCreateModal();
+                    loadGameState();
+                }
+            } catch (error) {
+                console.error('创建失败:', error);
+            }
+        };
+
+        // 修改后的模态框样式
+        const modals = document.querySelectorAll('.modal');
+        modals.forEach(modal => {
+            modal.style.position = 'fixed';
+            modal.style.top = '50%';
+            modal.style.left = '50%';
+            modal.style.transform = 'translate(-50%, -50%)';
+            modal.style.backgroundColor = 'rgba(0,0,0,0.5)';
+            modal.style.width = '100%';
+            modal.style.height = '100%';
+            modal.style.display = 'none';
+            modal.style.justifyContent = 'center';
+            modal.style.alignItems = 'center';
+        });
+
+        // 初始化加载数据
+        async function loadGameState() {
+            const response = await fetch('http://localhost:3090/api/game-state');
+            const data = await response.json();
+            
+            // 处理阵营颜色
+            data.forEach(settlement => {
+                if(settlement.faction_id && !factionColors[settlement.faction_id]) {
+                    factionColors[settlement.faction_id] = settlement.faction_color || 
+                        `#${Math.floor(Math.random()*16777215).toString(16)}`;
+                }
+            });
+
+            currentData = data;
+            renderMap();
+        }
+
+        // 渲染地图
+        // 修改 renderMap 函数
+        function renderMap() {
+            const map = document.getElementById('map');
+            map.innerHTML = '';
+
+            // 获取地图尺寸
+            const mapWidth = map.offsetWidth;
+            const mapHeight = map.offsetHeight;
+
+            currentData.forEach(settlement => {
+                const dot = document.createElement('div');
+                dot.className = 'settlement';
+                
+                // 将坐标转换为百分比
+                dot.style.left = `${(settlement.x / mapWidth) * 100}%`;
+                dot.style.top = `${(settlement.y / mapHeight) * 100}%`;
+                
+                dot.style.backgroundColor = factionColors[settlement.faction_id] || '#666';
+                dot.onclick = () => showEditModal(settlement);
+                map.appendChild(dot);
+            });
+        }
+
+        function getElementValue(id) {
+            const element = document.getElementById(id);
+            if (!element) {
+                console.error(`Element with id '${id}' not found`);
+                return null;
+            }
+            return element.value;
+        }
+
+        document.getElementById('createForm').onsubmit = async (e) => {
+            e.preventDefault();
+            
+            // 使用安全的方式获取值
+            const name = getElementValue('createName');
+            const x = parseFloat(getElementValue('createX'));
+            const y = parseFloat(getElementValue('createY'));
+            const terrain = getElementValue('createTerrain');
+            const population = parseFloat(getElementValue('createPopulation'));
+
+            // 验证所有必需字段
+            if (!name || isNaN(x) || isNaN(y) || !terrain || isNaN(population)) {
+                alert('请填写所有字段');
+                return;
+            }
+
+            const newSettlement = {
+                name: name,
+                x: x,
+                y: y,
+                terrain: terrain,
+                population: population,
+                economy: 50,
+                finance: 1000,
+                military: 100,
+                recruitable: 200,
+                stability: 70,
+                defense: 20
+            };
+
+            try {
+                const response = await fetch('http://localhost:3090/api/settlements', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(newSettlement)
+                });
+                
+                if (response.ok) {
+                    closeCreateModal();
+                    loadGameState();
+                } else {
+                    throw new Error('创建失败');
+                }
+            } catch (error) {
+                console.error('创建失败:', error);
+                alert('创建据点失败，请检查控制台');
+            }
+        };
+
+        // 显示编辑模态框
+        function showEditModal(settlement) {
+            document.getElementById('editModal').style.display = 'block';
+            document.getElementById('editId').value = settlement.id;
+            document.getElementById('editName').value = settlement.name;
+            document.getElementById('editPopulation').value = settlement.population;
+            document.getElementById('editEconomy').value = settlement.economy;
+            document.getElementById('editFinance').value = settlement.finance;
+            document.getElementById('editMilitary').value = settlement.military;
+            document.getElementById('editRecruitable').value = settlement.recruitable;
+            document.getElementById('editStability').value = settlement.stability;
+            document.getElementById('editDefense').value = settlement.defense;
+        }
+
+        // 在页面加载时检查所有必需元素
+        window.addEventListener('load', () => {
+            const requiredIds = ['createName', 'createX', 'createY', 'createTerrain', 'createPopulation'];
+            requiredIds.forEach(id => {
+                if (!document.getElementById(id)) {
+                    console.error(`Missing required element: #${id}`);
+                }
+            });
+        });
+
+        // 关闭模态框
+        function closeModal() {
+            document.getElementById('editModal').style.display = 'none';
+        }
+
+        // 提交编辑表单
+        document.getElementById('editForm').onsubmit = async (e) => {
+            e.preventDefault();
+            
+            const updates = {
+                name: document.getElementById('editName').value,
+                population: parseFloat(document.getElementById('editPopulation').value),
+                economy: parseFloat(document.getElementById('editEconomy').value),
+                finance: parseFloat(document.getElementById('editFinance').value),
+                military: parseFloat(document.getElementById('editMilitary').value),
+                recruitable: parseFloat(document.getElementById('editRecruitable').value),
+                stability: parseFloat(document.getElementById('editStability').value),
+                defense: parseFloat(document.getElementById('editDefense').value)
+            };
+
+            const id = document.getElementById('editId').value;
+            await fetch(`http://localhost:3090/api/settlements/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updates)
+            });
+
+            closeModal();
+            loadGameState();
+        };
+
+        // 推进时间
+        async function advanceYear() {
+            await fetch('http://localhost:3090/api/advance-year', { method: 'POST' });
+            loadGameState();
+        }
+
+        // 初始化
+        loadGameState();
+    </script>
+</body>
+</html>
